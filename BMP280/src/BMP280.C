@@ -24,6 +24,7 @@
 
 I2C_HandleTypeDef bmpI2C;
 SPI_HandleTypeDef bmpSPI;
+
 /*
  *	@brief: Configure spi to communicate with BMP
  *	@spix: One @SPI_CHOOSE to use for communication
@@ -34,6 +35,7 @@ void BMP_SPI_Init(SPI_CHOOSE spix)
 
 	//TODO
 }
+
 
 /*
  * 	@brief: Configure i2c to communicate with BMP
@@ -72,7 +74,7 @@ void BMP_I2C_Init(I2C_CHOOSE i2cx)
 }
 
 /*
- * brief: Read a number of bytes from BMP in interrupt mode
+ * @brief: Read a number of bytes from BMP in interrupt mode
  *
  * @param: reg is the firsts BMP register to be read
  * @param: count is the number of register to be read
@@ -87,7 +89,7 @@ void __BMP_Read(uint8_t reg, int count,uint8_t *data)
 }
 
 /*
- * brief: Write a number of bytes into BMP in interrupt mode
+ * @brief: Write a number of bytes into BMP in interrupt mode
  *
  * @param: register to write to
  * @param: data to write into register, the register(i) corresponds to data(i)
@@ -108,11 +110,94 @@ void __BMP_Write(uint8_t *reg, uint8_t *data, uint8_t count)
 	HAL_I2C_Master_Transmit_IT(&bmpI2C, BMP280_ADDR, toSend, sizeof(toSend));
 }
 
+/*
+ * @brief: Return the BMP id, should be 0x58
+ *
+ *	@retval: One byte representing BMP ID
+ */
+uint8_t BMP_WhoAmI()
+{
+	uint8_t toReturn;
+	return __BMP_Read(ID, 1, &toReturn);
+}
+
+/*
+ * @brief: Returns the sensor status, see BMP datasheet for more information
+ *
+ * @param: measuring: Automatically set to ‘1’ whenever a conversion is running
+ *			          and back to ‘0’ when the results have been transferred
+ *					  to the data registers.
+ * @param: imUpdate: Automatically set to ‘1’ when the NVM data are being
+ *					 copied to image registers and back to ‘0’ when the
+ *					 copying is done. The data are copied at power-on-reset
+ *					 and before every conversion.
+ */
+
+void BMP_Status(uint8_t *measuring, uint8_t *imUpdate)
+{
+
+	uint8_t toReturn;
+
+	__BMP_Read(STATUS, 1, &toReturn);
+
+	*measuring = (toReturn >> 3) & 0x01;
+	*imUpdate = (toReturn) & 0x01;
+}
+
+/*
+ *
+ * @brief: Configuration of BMP operation measurement mode
+ *
+ * @param tempOverSampling: One @BMP_Oversampling option
+ * @param preeOverSampling: One @BMP_Oversampling option
+ * @BMP_PWRMode: One @BMP_PWRMode
+ */
+
+void BMP_ConfigMeasurement(BMP_Oversampling tempOverSampling, BMP_Oversampling pressOverSampling, BMP_PWRMode pwrMode)
+{
+
+	uint8_t toSend = (tempOverSampling) << 5 | pressOverSampling << 2 | pwrMode;
+	__BMP_Write(CTRL_MEAS, toSend, 1);
+}
+
+/*
+ * @brief: Configuration of BMP standby and filter
+ *
+ * @param normalOpStandBy: One @BMP_StandByTime option
+ * @param iirFilter: One @BMP_IIRFIlter
+ * @param spiEnable: 1 to enable spi, 0 otherwise
+ */
+void BMP_Config(BMP_StandByTime normalOpStandBy, BMP_IIRFIlter iirFilter, uint8_t spiEnable)
+{
+	uint8_t toSend = normalOpStandBy << 5 | iirFilter << 2 | spiEnable;
+	__BMP_Write(CONFIG, toSend, 1);
+}
+
+/*
+ * @brief: Read raw (ADC) and uncompensated pressure sensor data
+ *
+ * @retval: An int representing pressure output
+ */
+int32_t BMP_ReadRawPress()
+{
+	int32_t pressureData;
+
+	int8_t toRead[3];
+
+	__BMP_Read(PRESS_MSB, 3, toRead);
+	pressureData = ( (toRead[2] << 12) | (toRead[1] << 4) | (toRead[0] & 0xF0) ) & 0xFFFFF;
+
+	return pressureData;
+}
+
 void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
 
 	return;
 }
+
+
+
 
 /**
   * @brief  Master Rx Transfer completed callback.
