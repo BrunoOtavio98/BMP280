@@ -12,9 +12,9 @@
 
 typedef enum
 {
-	SPI1,
-	SPI2,
-	SPI3
+	BMPSPI1,
+	BMPSPI2,
+	BMPSPI3
 }SPI_CHOOSE;
 
 
@@ -67,12 +67,14 @@ typedef enum
 
 
 void __BMP_Read(uint8_t reg, int count,uint8_t *data);
-void __BMP_Write(uint8_t reg, uint8_t data);
+void __BMP_Write(uint8_t *reg, uint8_t *data, uint8_t count);
 void BMP_ConfigMeasurement(BMP_Oversampling tempOverSampling, BMP_Oversampling pressOverSampling, BMP_PWRMode pwrMode);
 void BMP_Status(uint8_t *measuring, uint8_t *imUpdate);
 uint8_t BMP_WhoAmI();
 void BMP_Config(BMP_StandByTime normalOpStandBy, BMP_IIRFIlter iirFilter, uint8_t spiEnable);
-int32_t BMP_ReadRawPress();
+void BMP_ReadRaw(int *rawPress, int *rawTemp);
+float BMP_ReadTemperature();
+float BMP_ReadPression();
 
 
 #endif /* SRC_BMP280_H_ */

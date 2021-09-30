@@ -22,9 +22,19 @@
 #define FIRST_CALIB 0x88
 #define LAST_CALIB 0xA1
 
-I2C_HandleTypeDef bmpI2C;
-SPI_HandleTypeDef bmpSPI;
+static I2C_HandleTypeDef bmpI2C;
+static SPI_HandleTypeDef bmpSPI;
 
+static uint8_t pressureCalibrationP1[2];
+static int8_t pressureCalibration[16];
+static int8_t tempCalibration[4];
+static uint8_t tempCalibrationT1[2];
+static int t_fine;
+
+
+static void BMP_ReadCalibrationParam();
+static float TemperatureCompensateFormula(int tempRaw);
+static float PressureCompesateFormula(int tempPress);
 /*
  *	@brief: Configure spi to communicate with BMP
  *	@spix: One @SPI_CHOOSE to use for communication
@@ -71,6 +81,8 @@ void BMP_I2C_Init(I2C_CHOOSE i2cx)
 	}
 
 	HAL_I2C_Init(&bmpI2C);
+
+	BMP_ReadCalibrationParam();
 }
 
 /*
@@ -84,7 +96,7 @@ void BMP_I2C_Init(I2C_CHOOSE i2cx)
 void __BMP_Read(uint8_t reg, int count,uint8_t *data)
 {
 
-	HAL_I2C_Master_Transmit_IT(&bmpI2C, BMP280_ADDR, reg, sizeof(uint8_t));
+	HAL_I2C_Master_Transmit_IT(&bmpI2C, BMP280_ADDR, &reg, sizeof(uint8_t));
 	HAL_I2C_Master_Receive_IT(&bmpI2C, BMP280_ADDR, data, count);
 }
 
@@ -107,7 +119,7 @@ void __BMP_Write(uint8_t *reg, uint8_t *data, uint8_t count)
 		toSend[i][1] = data[i];
 	}
 
-	HAL_I2C_Master_Transmit_IT(&bmpI2C, BMP280_ADDR, toSend, sizeof(toSend));
+	HAL_I2C_Master_Transmit_IT(&bmpI2C, BMP280_ADDR, (uint8_t *)toSend, sizeof(toSend));
 }
 
 /*
@@ -118,7 +130,8 @@ void __BMP_Write(uint8_t *reg, uint8_t *data, uint8_t count)
 uint8_t BMP_WhoAmI()
 {
 	uint8_t toReturn;
-	return __BMP_Read(ID, 1, &toReturn);
+	__BMP_Read(ID, 1, &toReturn);
+	return toReturn;
 }
 
 /*
@@ -157,7 +170,7 @@ void BMP_ConfigMeasurement(BMP_Oversampling tempOverSampling, BMP_Oversampling p
 {
 
 	uint8_t toSend = (tempOverSampling) << 5 | pressOverSampling << 2 | pwrMode;
-	__BMP_Write(CTRL_MEAS, toSend, 1);
+	__BMP_Write(CTRL_MEAS, &toSend, 1);
 }
 
 /*
@@ -170,24 +183,135 @@ void BMP_ConfigMeasurement(BMP_Oversampling tempOverSampling, BMP_Oversampling p
 void BMP_Config(BMP_StandByTime normalOpStandBy, BMP_IIRFIlter iirFilter, uint8_t spiEnable)
 {
 	uint8_t toSend = normalOpStandBy << 5 | iirFilter << 2 | spiEnable;
-	__BMP_Write(CONFIG, toSend, 1);
+	__BMP_Write(CONFIG, &toSend, 1);
 }
 
 /*
- * @brief: Read raw (ADC) and uncompensated pressure sensor data
+ * @brief: Read (burst) raw (ADC) and uncompensated temperature and pressure data
  *
  * @retval: An int representing pressure output
  */
-int32_t BMP_ReadRawPress()
+void BMP_ReadRaw(int *rawPress, int *rawTemp)
 {
-	int32_t pressureData;
 
-	int8_t toRead[3];
+	int8_t toRead[6];
 
-	__BMP_Read(PRESS_MSB, 3, toRead);
-	pressureData = ( (toRead[2] << 12) | (toRead[1] << 4) | (toRead[0] & 0xF0) ) & 0xFFFFF;
+	__BMP_Read(PRESS_MSB, 6, (uint8_t *)toRead);
 
-	return pressureData;
+	rawPress[0] = toRead[2];
+	rawPress[1] = toRead[1];
+	rawPress[2] = toRead[0];
+
+	rawTemp[0] = toRead[6];
+	rawTemp[1] = toRead[5];
+	rawTemp[2] = toRead[4];
+}
+
+
+static void BMP_ReadCalibrationParam()
+{
+
+	int toRead[26];
+
+	__BMP_Read(0x88, 26, toRead);
+
+	tempCalibrationT1[0] = (uint8_t)toRead[0];
+	tempCalibrationT1[1] = (uint8_t)toRead[1];
+
+	for(int i = 0; i<4; i++)
+	{
+ 		tempCalibration[i] = toRead[i+2];
+	}
+
+	pressureCalibrationP1[0] = (uint8_t)toRead[6];
+	pressureCalibrationP1[1] = (uint8_t)toRead[7];
+
+	for(int i = 0; i<16; i++)
+	{
+		pressureCalibration[i] = toRead[i+8];
+	}
+}
+
+
+float BMP_ReadTemperature()
+{
+	int rawTemp[3];
+	int dummyPress[3];
+	int tempRaw = 0;
+
+
+	BMP_ReadRaw(dummyPress, rawTemp);
+
+	tempRaw = (rawTemp[0] >> 4) | ( rawTemp[1] << 4 ) | ( rawTemp[2] << 12 );
+	return TemperatureCompensateFormula(tempRaw);
+
+}
+
+
+static float TemperatureCompensateFormula(int tempRaw)
+{
+
+	int var1,var2,T;
+
+	uint16_t dig_T1 = tempCalibrationT1[0] | tempCalibrationT1[1] << 8;
+	int16_t dig_T2 = tempCalibration[0] | tempCalibration[1] << 8;
+	int16_t dig_T3 = tempCalibration[2] | tempCalibration[3] << 8;
+
+	var1 = ((((tempRaw>>3) - ((int)dig_T1<<1))) * ((int)dig_T2)) >> 11;
+	var2 = (((((tempRaw>>4) - ((int)dig_T1)) * ((tempRaw>>4) - ((int)dig_T1))) >> 12) * ((int)dig_T3)) >> 14;
+	t_fine = var1 + var2;
+
+	return (t_fine * 5 + 128) >> 8;
+}
+
+float BMP_ReadPression()
+{
+
+	int rawPress[3];
+	int dummyTemp[3];
+	int pressRaw = 0;
+
+
+	BMP_ReadRaw(rawPress, dummyTemp);
+
+	pressRaw = (rawPress[0] >> 4) | (rawPress[1] <<  4) | (rawPress[2] << 12);
+	return PressureCompesateFormula(pressRaw);
+}
+
+static float PressureCompesateFormula(int tempPress)
+{
+
+	int64_t var1,var2,p;
+
+	uint16_t dig_P1 = pressureCalibrationP1[0] | pressureCalibrationP1[1] << 8;
+	int16_t dig_P2 = pressureCalibration[0] | pressureCalibration[1] << 8;
+	int16_t dig_P3 = pressureCalibration[2] | pressureCalibration[3] << 8;
+	int16_t dig_P4 = pressureCalibration[4] | pressureCalibration[5] << 8;
+	int16_t dig_P5 = pressureCalibration[6] | pressureCalibration[7] << 8;
+	int16_t dig_P6 = pressureCalibration[8] | pressureCalibration[9] << 8;
+	int16_t dig_P7 = pressureCalibration[10] | pressureCalibration[11] << 8;
+	int16_t dig_P8 = pressureCalibration[12] | pressureCalibration[13] << 8;
+	int16_t dig_P9 = pressureCalibration[14] | pressureCalibration[15] << 8;
+
+
+	var1 = ((int64_t)t_fine) - 128000;
+	var2 = var1 * var1 * (int64_t)dig_P6;
+	var2 = var2 + ((var1*(int64_t)dig_P5)<<17);
+	var2 = var2 + (((int64_t)dig_P4)<<35);
+	var1 = ((var1 * var1 * (int64_t)dig_P3)>>8) + ((var1 * (int64_t)dig_P2)<<12);
+	var1 = (((((int64_t)1)<<47)+var1))*((int64_t)dig_P1)>>33;
+
+	if (var1 == 0)
+	{
+		return 0; // avoid exception caused by division by zero
+	}
+
+	p = 1048576-tempPress;
+	p = (((p<<31)-var2)*3125)/var1;
+	var1 = (((int64_t)dig_P9) * (p>>13) * (p>>13)) >> 25;
+	var2 = (((int64_t)dig_P8) * p) >> 19;
+	p = ((p + var1 + var2) >> 8) + (((int64_t)dig_P7)<<4);
+	return p/256;
 }
 
 void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c)
