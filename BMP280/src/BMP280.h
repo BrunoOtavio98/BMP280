@@ -27,7 +27,6 @@ typedef enum
 
 typedef enum
 {
-
 	NO_OVERSAMPLING,
 	OVERSAMPLING_BY1,
 	OVERSAMPLING_BY2,
@@ -38,7 +37,6 @@ typedef enum
 
 typedef enum
 {
-
 	SLEEP,
 	FORCED,
 	NORMAL

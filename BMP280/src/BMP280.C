@@ -6,21 +6,22 @@
  */
 #include "BMP280.h"
 #include <stdint.h>
+#include <stdbool.h>
 
-#define BMP280_ADDR 0x58
-#define TEMP_XLSB 0xFC
-#define TEMP_LSB 0xFB
-#define TEMP_MSB 0xFA
-#define PRESS_XLSB 0xF9
-#define PRESS_LSB 0xF8
-#define PRESS_MSB 0xF7
-#define CONFIG 0xF5
-#define CTRL_MEAS 0xF4
-#define STATUS 0xF3
-#define RESET 0xE0
-#define ID 0xD0
-#define FIRST_CALIB 0x88
-#define LAST_CALIB 0xA1
+uint8_t BMP280_ADDR = 0x76;
+uint8_t TEMP_XLSB = 0xFC;
+uint8_t TEMP_LSB = 0xFB;
+uint8_t TEMP_MSB = 0xFA;
+uint8_t PRESS_XLSB = 0xF9;
+uint8_t PRESS_LSB = 0xF8;
+uint8_t PRESS_MSB = 0xF7;
+uint8_t CONFIG = 0xF5;
+uint8_t CTRL_MEAS = 0xF4;
+uint8_t STATUS = 0xF3;
+uint8_t RESET_BMP = 0xE0;
+uint8_t ID = 0xD0;
+uint8_t FIRST_CALIB = 0x88;
+uint8_t LAST_CALIB = 0xA1;
 
 static I2C_HandleTypeDef bmpI2C;
 static SPI_HandleTypeDef bmpSPI;
@@ -35,6 +36,9 @@ static int t_fine;
 static void BMP_ReadCalibrationParam();
 static float TemperatureCompensateFormula(int tempRaw);
 static float PressureCompesateFormula(int tempPress);
+
+static void DefaultInitialization();
+
 /*
  *	@brief: Configure spi to communicate with BMP
  *	@spix: One @SPI_CHOOSE to use for communication
@@ -82,8 +86,17 @@ void BMP_I2C_Init(I2C_CHOOSE i2cx)
 
 	HAL_I2C_Init(&bmpI2C);
 
+	DefaultInitialization();
+
 	BMP_ReadCalibrationParam();
 }
+
+static void DefaultInitialization()
+{
+	BMP_ConfigMeasurement(OVERSAMPLING_BY2, OVERSAMPLING_BY4, NORMAL);
+	BMP_Config(T_62dot5, F_COEF4, false);
+}
+
 
 /*
  * @brief: Read a number of bytes from BMP in interrupt mode
@@ -96,8 +109,8 @@ void BMP_I2C_Init(I2C_CHOOSE i2cx)
 void __BMP_Read(uint8_t reg, int count,uint8_t *data)
 {
 
-	HAL_I2C_Master_Transmit_IT(&bmpI2C, BMP280_ADDR, &reg, sizeof(uint8_t));
-	HAL_I2C_Master_Receive_IT(&bmpI2C, BMP280_ADDR, data, count);
+	HAL_I2C_Master_Transmit(&bmpI2C, BMP280_ADDR << 1 , &reg, sizeof(uint8_t), HAL_MAX_DELAY);
+	HAL_I2C_Master_Receive(&bmpI2C, BMP280_ADDR << 1, data, count, HAL_MAX_DELAY);
 }
 
 /*
@@ -119,7 +132,7 @@ void __BMP_Write(uint8_t *reg, uint8_t *data, uint8_t count)
 		toSend[i][1] = data[i];
 	}
 
-	HAL_I2C_Master_Transmit_IT(&bmpI2C, BMP280_ADDR, (uint8_t *)toSend, sizeof(toSend));
+	HAL_I2C_Master_Transmit(&bmpI2C, BMP280_ADDR << 1, (uint8_t *)toSend, sizeof(toSend), HAL_MAX_DELAY);
 }
 
 /*
@@ -170,7 +183,7 @@ void BMP_ConfigMeasurement(BMP_Oversampling tempOverSampling, BMP_Oversampling p
 {
 
 	uint8_t toSend = (tempOverSampling) << 5 | pressOverSampling << 2 | pwrMode;
-	__BMP_Write(CTRL_MEAS, &toSend, 1);
+	__BMP_Write(&CTRL_MEAS, &toSend, 1);
 }
 
 /*
@@ -183,7 +196,7 @@ void BMP_ConfigMeasurement(BMP_Oversampling tempOverSampling, BMP_Oversampling p
 void BMP_Config(BMP_StandByTime normalOpStandBy, BMP_IIRFIlter iirFilter, uint8_t spiEnable)
 {
 	uint8_t toSend = normalOpStandBy << 5 | iirFilter << 2 | spiEnable;
-	__BMP_Write(CONFIG, &toSend, 1);
+	__BMP_Write(&CONFIG, &toSend, 1);
 }
 
 /*
@@ -251,7 +264,7 @@ float BMP_ReadTemperature()
 static float TemperatureCompensateFormula(int tempRaw)
 {
 
-	int var1,var2,T;
+	int var1,var2;
 
 	uint16_t dig_T1 = tempCalibrationT1[0] | tempCalibrationT1[1] << 8;
 	int16_t dig_T2 = tempCalibration[0] | tempCalibration[1] << 8;
@@ -316,7 +329,6 @@ static float PressureCompesateFormula(int tempPress)
 
 void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
-
 	return;
 }
 
